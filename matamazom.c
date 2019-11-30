@@ -2,279 +2,397 @@
 // Created by manar on 20/11/2019.
 //
 
+//
+// Created by manar on 25/11/2019.
+//
+
 #include <stdlib.h>
 #include <stdio.h>
 #include <assert.h>
+#include <string.h>
 #include "amount_set.h"
+#include "matamazom.h"
+#include "order.h"
+#include "product.h"
+#include "matamazom_print.h"
+#include "set.h"
+#define FAILURE 0
+#define SUCCESS 1
 
-typedef struct AmountSetElement_t{
-    ASElement element;
-    double amount;
-    struct AmountSetElement_t* next;
-}ASElements;
 
 
-struct AmountSet_t{
-    CopyASElement copyElement;
-    FreeASElement freeElement;
-    CompareASElements compareElements;
-    ASElements* head;
-    ASElements* iterator;
+struct Matamazom_t{
+    AmountSet products;
+    Set orders;
+    unsigned int orderId;
 };
 
-AmountSet asCreate(CopyASElement copyElement,
-                   FreeASElement freeElement,
-                   CompareASElements compareElements){
+struct product_t{
+    char* productName;
+    unsigned int id;
+    MtmProductData data;
+    MatamazomAmountType type;
+    double productIncome;
+    MtmCopyData copyData;
+    MtmFreeData freeData;
+    MtmGetProductPrice productPrice;
+};
 
-    if ((!copyElement)||(!freeElement)||(!compareElements)){
-        return NULL;
-    }
+struct order_t{
+    unsigned int id;
+    AmountSet orderedProducts;
+};
 
-    AmountSet newSet=malloc(sizeof(*newSet));
-    if (newSet==NULL){
-        return NULL;
+static bool isValidName(const char* name){
+    if (strlen(name)==0 || !name){//if name is empty
+        return  false;
     }
-    newSet->copyElement=copyElement;
-    newSet->freeElement=freeElement;
-    newSet->compareElements=compareElements;
-    newSet->head=NULL;
-    newSet->iterator=newSet->head;
-    return newSet;
-
-}
-
-void asDestroy(AmountSet set){
-    if(set==NULL){
-        return;
+    char firstLet = *name;
+    if ((firstLet>='A' && firstLet<='Z')||(firstLet>='0' && firstLet<='9')||(firstLet>='a' &&firstLet<='z')){
+        return true;
     }
-    asClear(set);
-    free(set);
-}
-
-
-AmountSet asCopy(AmountSet set){
-    if(!set){
-        return  NULL;
-    }
-    AmountSet newSet=asCreate(set->copyElement,set->freeElement,set->compareElements);
-    if (newSet==NULL){
-        return  NULL;
-    }
-    AS_FOREACH(ASElement, iterator, set){
-        asRegister(newSet,iterator);
-//        assert(result==AS_SUCCESS);
-        double x=0;
-        double* outcome=&x;
-        asGetAmount(set,iterator,outcome);
-        asRegister(newSet,iterator);
-        asChangeAmount(newSet,iterator,*outcome);
-
-    }
-    return newSet;
-}
-
-
-
-ASElement asGetFirst(AmountSet set){
-    if(set==NULL){
-        return NULL;
-    }
-    if(set->head ==NULL){
-        return NULL;
-    }
-    set->iterator=set->head;
-    return set->iterator->element;
-}
-
-
-ASElement asGetNext(AmountSet set){
-    if(set==NULL){
-        return  NULL;
-    }
-    if (set->iterator==NULL){//the iterator is at an invalid state
-        return  NULL;
-    }
-    if (set->iterator->next==NULL){//iterator reached the end
-        set->iterator=set->iterator->next;
-        return  NULL;
-    }
-    set->iterator=set->iterator->next;
-    return set->iterator->element;
-}
-
-
-int asGetSize(AmountSet set) {
-    if (set == NULL) {
-        return -1;
-    }
-    if (set->head == NULL) {
-        return 0;
-    }
-    int size = 0;
-    ASElements *iter = set->head;
-    while (iter != NULL) {
-        size++;
-        iter = iter->next;
-    }
-    return size;
-}
-
-
-bool asContains(AmountSet set, ASElement element){
-    if ((set==NULL)||(element==NULL)){
-        return false;
-    }
-    if (set->head==NULL){
-        return false;
-    }
-    ASElements* iter=set->iterator;
-    ASElement current_element=asGetFirst(set);
-    while(current_element!=NULL){
-        if(set->compareElements(element,current_element)==0){
-            set->iterator=iter;
-            return true;
-        }
-        current_element=asGetNext(set);
-    }
-    set->iterator=iter;
     return false;
 }
 
+static bool validAmountAccordingToType(MatamazomAmountType type,const double amount){
+    double copy = amount - 0.5;
+    if(amount<0)
+        copy += 1;
+    switch (type) {
+        case MATAMAZOM_INTEGER_AMOUNT:
+            return (((amount - (int) amount <= 0.001) && (amount - (int) amount >= 0)) ||
+                    (((int) amount - amount >= 0.999) && (amount < 0)) ||
+                    ((int) amount + 1 - amount <= 0.001)||
+                    ((int)amount - amount<=0.001 && amount<0));
+        case MATAMAZOM_HALF_INTEGER_AMOUNT:
+            return ((copy - (int) amount <= 0.001 && copy - (int) amount >= 0) ||
+                    ((amount - (int) amount <= 0.001) && (amount - (int) amount >= 0)) ||
+                    ((int) amount - amount <= 0.001 && amount < 0) ||
+                    ((int) amount + 1 - amount <= 0.001) ||
+                    ((int) amount - copy <= 0.001 && (int) amount > (int) copy)||
+                    ((((int)amount-amount>=0.5 &&(int)amount - amount<=0.501)))||
+                    ((int) amount - amount >= 0.999) );
+        case MATAMAZOM_ANY_AMOUNT:
+            return true;
+    }
+    return false;
+}
 
-AmountSetResult asGetAmount(AmountSet set, ASElement element, double *outAmount){
-    if((set==NULL)||(element==NULL)||(outAmount==NULL)){
-        return AS_NULL_ARGUMENT;
-    }
-    ASElements* iter=set->iterator;
-//    ASElement current_element=asGetFirst(set);
-    asGetFirst(set);
-    assert(set->iterator=set->head);
-    while (set->iterator!=NULL){
-        if(set->compareElements(set->iterator->element,element)==0){
-            double amount=set->iterator->amount;
-            *outAmount=amount;
-            set->iterator=iter;
-            return AS_SUCCESS;
+static Product mtmGetProduct(AmountSet set, unsigned int productId){
+    AS_FOREACH(Product,currentProduct,set){
+        if(currentProduct->id==productId){
+            return currentProduct;
         }
-        set->iterator=set->iterator->next;
     }
-    set->iterator=iter;
-    assert(asContains(set,element)==false);
-    return AS_ITEM_DOES_NOT_EXIST;
+    return NULL;
+}
+
+static Order mtmGetOrder(Set set, unsigned int orderId){
+    SET_FOREACH(Order,currentOrder,set){
+        if(currentOrder->id==orderId){
+            return currentOrder;
+        }
+    }
+    return NULL;
+}
+
+static bool validOrderProductsAmounts(Matamazom matamazom,AmountSet orderProducts){
+    AS_FOREACH(Product,currentProduct,orderProducts) {
+        double productAmountInOrder=0;
+        double productAmountInMtm=0;
+        asGetAmount(orderProducts, currentProduct,&productAmountInOrder);
+        asGetAmount(matamazom->products, currentProduct, &productAmountInMtm);//matamazom contains the currentProduct
+        if ((productAmountInMtm) < (productAmountInOrder)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static void changeProductIncome(AmountSet set, unsigned int productId, double income){
+    Product mtmProduct=mtmGetProduct(set,productId);
+    assert(mtmProduct!=NULL);
+    mtmProduct->productIncome=mtmProduct->productIncome+income;
 }
 
 
-AmountSetResult asRegister(AmountSet set, ASElement element){
-    if(set==NULL || element==NULL){
-        return AS_NULL_ARGUMENT;
-    }
-    if(asContains(set,element)==true){
-        return  AS_ITEM_ALREADY_EXISTS;
-    }
-    ASElements* new_set_element=malloc(sizeof(*new_set_element));
-    if (new_set_element==NULL){
-        return AS_OUT_OF_MEMORY;
-    }
-    new_set_element->amount=0;
-    new_set_element->element=set->copyElement(element);
-    new_set_element->next=NULL;
-    if (set->head==NULL){//adding the element at the beginning of the set(the set is empty)
-        set->head=new_set_element;
-        set->iterator=set->head;
-        return AS_SUCCESS;
-    }
-    ASElement currentElement = asGetFirst(set);
-    if (set->compareElements(element,currentElement) < 0){//adding the new_element at the beginning of the set
-        new_set_element->next = set->iterator;
-        set->head = new_set_element;
-        return AS_SUCCESS;
-    }
-    while(set->iterator->next != NULL) {
-        if (set->compareElements(element,set->iterator->next->element) < 0) {
-            new_set_element->next = set->iterator->next;
-            set->iterator->next = new_set_element;
-            return AS_SUCCESS;
+static Product bestSelling(AmountSet products,double* outcome){
+    if(!products)
+        return NULL;
+    Product best=NULL;
+    double max=0;
+    AS_FOREACH(Product,currentProduct,products){
+        double productIncome= currentProduct->productIncome;
+        if(productIncome>max) {
+            best = currentProduct;
+            max= productIncome;
         }
-        currentElement = asGetNext(set);
     }
-    set->iterator->next = new_set_element;
-    set->iterator = new_set_element->next;
-    return AS_SUCCESS;
+    *outcome = max;
+    return best;
 }
 
+    Matamazom matamazomCreate() {
+        Matamazom newMatamzom = malloc(sizeof(*newMatamzom));
+        if (newMatamzom == NULL) {
+            return NULL;
+        }
+        newMatamzom->products =
+                asCreate((CopyASElement) productCopy, (FreeASElement) productDestroy,
+                         (compareSetElements) productCompare);
+        if (newMatamzom->products == NULL) {
+            matamazomDestroy(newMatamzom);
+            return NULL;
+        }
+        newMatamzom->orders =
+                setCreate((copySetElements)orderCopy,(freeSetElements)orderDestroy, (compareSetElements)orderCompare);
+        if (newMatamzom->orders == NULL) {
+            matamazomDestroy(newMatamzom);
+            return NULL;
+        }
+        newMatamzom->orderId=1;
+        return newMatamzom;
+    }
 
-AmountSetResult asChangeAmount(AmountSet set, ASElement element, const double amount){
-    if( !set || ! element){
-        return  AS_NULL_ARGUMENT;
+    void matamazomDestroy(Matamazom matamazom) {
+        asDestroy(matamazom->products);
+        setDestroy(matamazom->orders);
+        free(matamazom);
     }
-    if(asContains(set,element)==false){
-        return AS_ITEM_DOES_NOT_EXIST;
+
+
+MatamazomResult mtmNewProduct(Matamazom matamazom, const unsigned int id, const char *name,
+                              const double amount, const MatamazomAmountType amountType,
+                              const MtmProductData customData, MtmCopyData copyData,
+                              MtmFreeData freeData, MtmGetProductPrice prodPrice) {
+    if ((!matamazom) || (!name) || (!customData) || (!copyData) || (!freeData) || (!prodPrice)) {
+        return MATAMAZOM_NULL_ARGUMENT;
     }
-    ASElements* iter=set->iterator;
-//    ASElement current_element=asGetFirst(set);
-    set->iterator=set->head;
-    while (set->iterator!=NULL){
-        if(set->compareElements(set->iterator->element,element)==0){
-            double new_total_amount=(set->iterator->amount)+amount;
-            if(new_total_amount<0){
-                return AS_INSUFFICIENT_AMOUNT;
+    if (isValidName(name) == false) {
+        return MATAMAZOM_INVALID_NAME;
+    }
+    if((amount<0)||(validAmountAccordingToType(amountType,amount)==false)) {
+        return MATAMAZOM_INVALID_AMOUNT;
+    }
+    Product new_product = productCreate( id,name,customData,amountType,copyData,freeData,prodPrice);
+    if (!new_product){
+        return MATAMAZOM_OUT_OF_MEMORY;
+    }
+    AmountSetResult result = asRegister(matamazom->products,new_product);
+    if (result== AS_ITEM_ALREADY_EXISTS){
+        productDestroy(new_product);
+        return MATAMAZOM_PRODUCT_ALREADY_EXIST;
+    }
+    if (result==AS_SUCCESS){
+        asChangeAmount(matamazom->products,new_product,amount);
+        return MATAMAZOM_SUCCESS;
+    }
+    else return MATAMAZOM_OUT_OF_MEMORY;
+}
+
+MatamazomResult mtmChangeProductAmount(Matamazom matamazom, const unsigned int id, const double amount){
+    if(!matamazom){
+        return MATAMAZOM_NULL_ARGUMENT;
+    }
+    AS_FOREACH(Product,iterator,matamazom->products){
+        if (iterator->id==id) {
+            if (validAmountAccordingToType(iterator->type, amount) == false) {
+                return MATAMAZOM_INVALID_AMOUNT;
             }
-            set->iterator->amount=new_total_amount;
-            set->iterator=iter;
-            return AS_SUCCESS;
+            AmountSetResult result = asChangeAmount(matamazom->products, iterator, amount);
+            if (result == AS_INSUFFICIENT_AMOUNT) {
+                return MATAMAZOM_INSUFFICIENT_AMOUNT;
+            }
+            assert(result == AS_SUCCESS);
+            return MATAMAZOM_SUCCESS;
         }
-        set->iterator=set->iterator->next;
     }
-    return AS_SUCCESS;
+    return MATAMAZOM_PRODUCT_NOT_EXIST;
 }
 
 
-AmountSetResult asDelete(AmountSet set, ASElement element){
-    if(!set || !element){
-        return  AS_NULL_ARGUMENT;
+MatamazomResult mtmClearProduct(Matamazom matamazom, const unsigned int id){//we did not erase the product from the orders
+    if(!matamazom){
+        return MATAMAZOM_NULL_ARGUMENT;
     }
-    if (!asContains(set,element)){
-        return AS_ITEM_DOES_NOT_EXIST;
+    Product productToDelete=mtmGetProduct(matamazom->products,id);
+    if(productToDelete==NULL){
+        return MATAMAZOM_PRODUCT_NOT_EXIST;
     }
-    if(set->compareElements(set->head->element,element)==0){//deleting the head
-        if(set->head->next==NULL){//there is just one ASElement in the set
-            set->freeElement(set->head->element);
-            free(set->head);
-            set->head=NULL;
-            set->iterator=set->head;
-            return AS_SUCCESS;
-        }
-        ASElements* ptr=set->head;
-        set->head=set->head->next;
-        set->iterator=set->head;
-        ptr->next=NULL;
-        set->freeElement(ptr->element);
-        free(ptr);
-        return AS_SUCCESS;
+    asDelete(matamazom->products,productToDelete);
+    SET_FOREACH(Order,currentOrder,matamazom->orders){
+       Product product=mtmGetProduct(currentOrder->orderedProducts,id);
+       if(product!=NULL){
+           asDelete(currentOrder->orderedProducts,product);
+       }
     }
-//    ASElement current_element=asGetFirst(set);
-    set->iterator=set->head;
-    while (set->iterator->next != NULL) {
-        ASElements* ptr = set->iterator->next;
-        if (set->compareElements(ptr->element, element) == 0){
-            set->iterator->next = ptr->next;
-            set->freeElement(ptr->element);
-            ptr->next = NULL;
-            free(ptr);
-            return AS_SUCCESS;
-        }
-        set->iterator=set->iterator->next;
-    }
-    return AS_NULL_ARGUMENT;
+    return MATAMAZOM_SUCCESS;
 }
 
 
-AmountSetResult asClear(AmountSet set){
-    if(set==NULL){
-        return AS_NULL_ARGUMENT;
+
+unsigned int mtmCreateNewOrder(Matamazom matamazom){
+    if(!matamazom){
+        return MATAMAZOM_NULL_ARGUMENT;
     }
-    while(set->head!=NULL){
-        asDelete(set,set->head->element);
+    Order newOrder=orderCreate(matamazom->orderId);
+    if(newOrder==NULL){
+        return FAILURE;
     }
-    return AS_SUCCESS;
+    if(setAdd(matamazom->orders,newOrder)!=SET_SUCCESS){
+        orderDestroy(newOrder);
+        return FAILURE;
+    }
+    matamazom->orderId=matamazom->orderId+1;
+    return newOrder->id;
 }
+
+
+
+MatamazomResult mtmChangeProductAmountInOrder(Matamazom mtmazom , const unsigned int orderId,
+                                              const unsigned int productId, const double amount){
+    if(!mtmazom){
+        return MATAMAZOM_NULL_ARGUMENT;
+    }
+    Order order=mtmGetOrder(mtmazom->orders,orderId);
+    if(order==NULL){
+        return MATAMAZOM_ORDER_NOT_EXIST;
+    }
+    Product product=mtmGetProduct(mtmazom->products,productId);
+    if(product==NULL){
+        return MATAMAZOM_PRODUCT_NOT_EXIST;
+    }
+    if(validAmountAccordingToType(product->type,amount)==false){
+        return MATAMAZOM_INVALID_AMOUNT;
+    }
+    if(amount==0){
+        return MATAMAZOM_SUCCESS;
+    }
+    AmountSetResult result = asChangeAmount(order->orderedProducts,product,amount);
+    if(result == AS_INSUFFICIENT_AMOUNT){
+      asDelete(order->orderedProducts,product);
+    }
+    if(result == AS_ITEM_DOES_NOT_EXIST && amount>0){
+       asRegister(order->orderedProducts,product);
+       asChangeAmount(order->orderedProducts,product,amount);
+    }
+    return MATAMAZOM_SUCCESS;
+
+}
+
+
+MatamazomResult mtmShipOrder(Matamazom matamazom, const unsigned int orderId){
+    if(!matamazom){
+        return MATAMAZOM_NULL_ARGUMENT;
+    }
+    Order orderToShip=mtmGetOrder(matamazom->orders,orderId);
+    if(orderToShip==NULL){
+        return MATAMAZOM_ORDER_NOT_EXIST;
+    }
+    if (validOrderProductsAmounts(matamazom,orderToShip->orderedProducts) == false) {
+        return MATAMAZOM_INSUFFICIENT_AMOUNT;
+    }
+    AS_FOREACH(Product,currentProduct,orderToShip->orderedProducts) {
+        double productAmountInOrder=0;
+        double productAmountInMtm=0;
+        asGetAmount(orderToShip->orderedProducts, currentProduct, &productAmountInOrder);
+        asGetAmount(matamazom->products, currentProduct, &productAmountInMtm);
+        asChangeAmount(matamazom->products, currentProduct, -(productAmountInOrder));
+        double income = currentProduct->productPrice(currentProduct->data, productAmountInOrder);
+        changeProductIncome(matamazom->products, currentProduct->id, income);
+        AmountSetResult result = asDelete(orderToShip->orderedProducts, currentProduct);
+        assert(result == AS_SUCCESS);
+    }
+    return MATAMAZOM_SUCCESS;
+}
+
+
+
+
+
+
+MatamazomResult mtmCancelOrder(Matamazom matamazom, const unsigned int orderId){
+    if(!matamazom){
+        return MATAMAZOM_NULL_ARGUMENT;
+    }
+    Order orderToCancel=mtmGetOrder(matamazom->orders,orderId);
+    if(orderToCancel==NULL){
+        return MATAMAZOM_ORDER_NOT_EXIST;
+    }
+    setRemove(matamazom->orders,orderToCancel);
+    return MATAMAZOM_SUCCESS;
+}
+
+
+
+
+
+MatamazomResult mtmPrintInventory(Matamazom matamazom, FILE *output){
+    if(!matamazom || !output)
+        return MATAMAZOM_NULL_ARGUMENT;
+    double amount = 0;
+    fprintf(output,"Inventory Status:\n");
+    AS_FOREACH(Product,iterator,matamazom->products){
+        asGetAmount(matamazom->products,iterator,&amount);
+        MtmProductData data=iterator->data;
+        double unit=1;
+        double pricePerUnit=iterator->productPrice(data,unit);
+        mtmPrintProductDetails(iterator->productName,iterator->id,amount,pricePerUnit,output);
+    }
+    return MATAMAZOM_SUCCESS;
+}
+
+
+MatamazomResult mtmPrintOrder(Matamazom matamazom, const unsigned int orderId, FILE *output){
+        if(!matamazom ||!output){
+            return MATAMAZOM_NULL_ARGUMENT;
+        }
+        Order orderToPrint=mtmGetOrder(matamazom->orders,orderId);
+        if(orderToPrint==NULL){
+            return MATAMAZOM_ORDER_NOT_EXIST;
+        }
+        double totalPrice=0;
+        mtmPrintOrderHeading(orderId,output);
+        AS_FOREACH(Product,currentProduct,orderToPrint->orderedProducts){
+            double amount=0;
+            asGetAmount(orderToPrint->orderedProducts,currentProduct,&amount);
+            double productPrice=currentProduct->productPrice(currentProduct->data,amount);
+            mtmPrintProductDetails(currentProduct->productName,currentProduct->id,amount,productPrice,output);
+            totalPrice=totalPrice+productPrice;
+        }
+        mtmPrintOrderSummary(totalPrice, output);
+        return  MATAMAZOM_SUCCESS;
+}
+
+
+
+MatamazomResult mtmPrintBestSelling(Matamazom matamazom, FILE *output){
+    if(!matamazom || !output)
+        return MATAMAZOM_NULL_ARGUMENT;
+    double outcome=0;
+    Product best = bestSelling(matamazom->products,&outcome);
+    printf("Best Selling Product:\n");
+    if(!best){
+        printf("none\n");
+        return MATAMAZOM_SUCCESS;
+    }
+    mtmPrintIncomeLine(best->productName,best->id,outcome,output);
+    return MATAMAZOM_SUCCESS;
+    }
+
+MatamazomResult mtmPrintFiltered(Matamazom matamazom, MtmFilterProduct customFilter, FILE *output){
+    if(!matamazom || !customFilter || !output)
+        return MATAMAZOM_NULL_ARGUMENT;
+    double amount = 0;
+    AS_FOREACH(Product,currentProduct,matamazom->products){
+        asGetAmount(matamazom->products,currentProduct,&amount);
+        if(customFilter(currentProduct->id,currentProduct->productName,amount,currentProduct->data)){
+            mtmPrintProductDetails(currentProduct->productName,currentProduct->id,amount
+                    ,currentProduct->productPrice(currentProduct->data,amount),output);
+        }
+    }
+    return MATAMAZOM_SUCCESS;
+}
+
+
+
