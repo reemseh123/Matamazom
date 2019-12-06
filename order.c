@@ -3,7 +3,7 @@
 //
 #include "product.h"
 #include <stdlib.h>
-#include "Order.h"
+#include "order.h"
 #include <string.h>
 #include "product.h"
 #include "amount_set.h"
@@ -21,11 +21,11 @@ Order orderCreate(unsigned int id){
     if(!order){
         return NULL;
     }
-    order->orderedProducts=asCreate((CopyASElement)productCopy, (FreeASElement)productDestroy,
+    order->orderedProducts=asCreate((CopyASElement)productCopy,(FreeASElement)productDestroy,
                                     (CompareASElements)productCompare);
     if(order->orderedProducts==NULL){
-      orderDestroy(order);
-      return NULL;
+        orderDestroy(order);
+        return NULL;
     }
     order->id=id;
     return order;
@@ -38,6 +38,7 @@ void orderDestroy(Order order){
     }
     asDestroy(order->orderedProducts);
     free(order);
+
 }
 
 
@@ -49,20 +50,24 @@ Order orderCopy(Order order){
     if(newOrder==NULL){
         return NULL;
     }
-    AmountSet set_copy = asCopy(order->orderedProducts);
-    if(!set_copy){
+    if(order->orderedProducts==NULL){
+        return newOrder;
+    }
+    newOrder->orderedProducts= asCopy(order->orderedProducts);
+    if(!(newOrder->orderedProducts)){
         orderDestroy(newOrder);
         return NULL;
     }
-    newOrder->orderedProducts = set_copy;
     return newOrder;
 }
 
 
-    int orderCompare(Order or1, Order or2){
-        if(!or1 || !or2)
-            return -1;
-        return or1->id - or2->id;
+
+
+
+int orderCompare(Order or1, Order or2){
+    if(!or1 || !or2){
+        return -1;
     }
-
-
+    return(or1->id - or2->id);
+}
